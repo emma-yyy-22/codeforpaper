@@ -1,0 +1,22 @@
+# Ignore data/datasets folder
+data/datasets/
+
+# Ignore all wandb folders
+wandb/
+
+# Ignore all __pycache__ folders
+__pycache__/
+
+# Ignore all .ipynb_checkpoints folders
+.ipynb_checkpoints/
+
+# Ignore all saved models in .pt files
+*.pt
+
+# Ignore all result files but not the analysis files
+results/*/
+
+# Ignore all images but not the essential ones
+figures/*/
+
+.DS_Store
