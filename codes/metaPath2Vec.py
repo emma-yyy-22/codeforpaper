@@ -1,3 +1,4 @@
+# This file contains the code to pre-train the embeddings of mutations using MetaPath2Vec
 import numpy as np
 import pandas as pd
 import torch
@@ -5,19 +6,27 @@ import dgl
 from torch.optim import SparseAdam
 from torch.utils.data import DataLoader
 from dgl.nn.pytorch import MetaPath2Vec
-from bayes_opt import BayesianOptimization
-from utils import *
+import argparse
+from codes.util import *
 
-DRUG = 'INH'
-SPLIT_NUM = 0
-NUM_EPOCHS = 200
-BATCH_SIZE = 128
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# parse the arguments
+def parse_args_metapath2vec():
+    parser = argparse.ArgumentParser(description='Pre-train mutation embeddings')
+    parser.add_argument('--drug', type=str, default='INH', help='Drug name')
+    parser.add_argument('--split_num', type=int, default=0, help='Split number')
+    parser.add_argument('--emb_dim', type=int, default=128, help='Embedding dimension')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
+    parser.add_argument('--max_epochs', type=int, default=200, help='Number of epochs')
+    parser.add_argument('--save_path', type=str, default='../data/intermediate/', help='Path to save the embeddings')
+    return parser.parse_args()
 
 
 # get the gene, loci and synonymous attributes of mutations
 def getMutAttr(mut, attr):
+    assert attr in ['gene', 'loci', 'syno']
+
     mut_split = mut.split('_')
     gene = mut_split[0]
     if attr == 'gene':
@@ -37,8 +46,6 @@ def getMutAttr(mut, attr):
     if attr == 'syno':
         return syno
 
-    raise ValueError('Invalid attr value: {}'.format(attr))
-
 
 # function to return a dict of genes given a dict of mutations
 def getAttrDict(dict_mut, attr):
@@ -51,7 +58,7 @@ def getAttrDict(dict_mut, attr):
 # function to return the element of a heterogeneous graph except the co-occurrence edges of mutations
 def getEdges(drug, split_num, attr):
     source, target = [], []
-    mut_dict = getMutDict(drug, split_num)
+    mut_dict = get_mut_dict(drug, split_num)
     attr_dict = getAttrDict(mut_dict, attr)
     for mut in mut_dict.keys():
         source.append(mut_dict[mut])
@@ -62,16 +69,14 @@ def getEdges(drug, split_num, attr):
 # function to return the co-occurrence edges of mutations
 def getCoEdges(drug, split_num):
     source, target = [], []
-    geno_pheno = pd.read_pickle('../Data/Walker2015Lancet.pkl')
-    mut_dict = getMutDict(drug, split_num)
+    geno_pheno = get_geno_pheno()
+    mut_dict = get_mut_dict(drug, split_num)
 
-    if split_num != None:
+    if split_num != -1:
         # Load the split
-        with open(f'../Data/idx_splits/Walker_single_binary/{drug}_split.pickle', 'rb') as f:
-            train_idx, _, _ = pickle.load(f)[split_num]
+        train_idx, _, _ = get_data_splits(drug)[split_num]
     else:
-        with open(f'../Data/idx_splits/Walker_single_binary/{drug}_index.pickle', 'rb') as f:
-            train_idx = pickle.load(f)
+        train_idx = get_data_indices(drug)
 
     mutations = geno_pheno['MUTATIONS'][train_idx]
     
@@ -98,23 +103,24 @@ def getGraph(drug, split_num):
 
 
 # function to train the model
-def trainMetaPath2Vec(drug, split_num, params):
-    graph_data = getGraph(drug, split_num)
+def trainMetaPath2Vec(args):
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    graph_data = getGraph(args.drug, args.split_num)
 
     g = dgl.heterograph(graph_data, device=device)
     meta_path = ['mut2gene', 'gene2mut', 'mut2loci', 'loci2mut', 'mut2syno', 'syno2mut', 'mut2iso', 'iso2mut']
-    model = MetaPath2Vec(g, meta_path, window_size=1, emb_dim=128)
-    if torch.cuda.is_available():
-        model.cuda()
+    model = MetaPath2Vec(g, meta_path, window_size=1, emb_dim=args.emb_dim)
+    model = model.to(device)
 
-    dataloader = DataLoader(torch.arange(g.num_nodes('mut')), batch_size = BATCH_SIZE, shuffle=True, collate_fn = model.sample)
-    optimizer = SparseAdam(model.parameters(), lr=params['learning_rate'])
+    dataloader = DataLoader(torch.arange(g.num_nodes('mut')), batch_size = args.batch_size, shuffle=True, collate_fn = model.sample)
+    optimizer = SparseAdam(model.parameters(), lr=args.learning_rate)
 
     best_loss = np.inf
     best_loss_epoch = 0
     best_model = None
 
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(args.max_epochs):
         total_loss = 0
         for (pos_u, pos_v, neg_v) in dataloader:
             loss = model(pos_u.to(device), pos_v.to(device), neg_v.to(device))
@@ -122,7 +128,6 @@ def trainMetaPath2Vec(drug, split_num, params):
             loss.backward()
             optimizer.step()
             total_loss += loss.detach().to('cpu').item()
-        # print(f'Epoch: {epoch}, Loss: {total_loss}')
 
         if total_loss < best_loss:
             best_loss = total_loss
@@ -143,50 +148,14 @@ def trainMetaPath2Vec(drug, split_num, params):
     return mut_emb, -best_loss  # return the embeddings and the negative loss for hyperparameter optimization
 
 
-metaPath_params_list = {
-    'learning_rate': (1, 50)
-}
-
-def metaPath_best_loss(learning_rate, return_res=False):
-    params = {}
-    params['learning_rate'] = learning_rate * 1e-3
-    res, best_loss = trainMetaPath2Vec(DRUG, SPLIT_NUM, params)
-    if return_res:
-        return res
-    else:
-        return best_loss
-
+def main():
+    args = parse_args_metapath2vec()
+    mut_emb, _ = trainMetaPath2Vec(args)
+    with open(f'{args.save_path}/{args.drug}_{args.split_num}_emb.pickle', 'wb') as f:
+        pickle.dump(mut_emb, f)
 
 if __name__ == '__main__':
-    drug_list = getDrugList('Walker')
-    for drug in drug_list:
-        if os.path.exists(f'../Data/idx_splits/Walker_single_binary/{drug}_emb.pickle'):
-            continue
-        DRUG = drug
-        res_list = []
-        for split_num in range(20):
-            SPLIT_NUM = split_num
-            print(f'Split {SPLIT_NUM} for {DRUG} using MetaPath2Vec')
+    main()
 
-            hyper_opt = BayesianOptimization(metaPath_best_loss, metaPath_params_list)
-            hyper_opt.maximize(10, 5)
-            best_hyper = hyper_opt.max['params']
-            res_emb = metaPath_best_loss(**best_hyper, return_res=True)
-            res_list.append(res_emb)
-        with open(f'../Data/idx_splits/Walker_single_binary/{drug}_emb.pickle', 'wb') as f:
-            pickle.dump(res_list, f)
-
-    for drug in drug_list:
-        if os.path.exists(f'../Data/idx_splits/Walker_single_binary/{drug}_emb_all.pickle'):
-            continue
-        DRUG = drug
-        SPLIT_NUM = None
-        print(f'All for {DRUG} using MetaPath2Vec')
-        hyper_opt = BayesianOptimization(metaPath_best_loss, metaPath_params_list)
-        hyper_opt.maximize(10, 5)
-        best_hyper = hyper_opt.max['params']
-        res_emb = metaPath_best_loss(**best_hyper, return_res=True)
-        with open(f'../Data/idx_splits/Walker_single_binary/{drug}_emb_all.pickle', 'wb') as f:
-            pickle.dump(res_emb, f)
 
 

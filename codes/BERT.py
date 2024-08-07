@@ -17,17 +17,27 @@ from transformers import BertConfig
 from transformers.modeling_outputs import SequenceClassifierOutput
 from sklearn.metrics import roc_auc_score
 from bayes_opt import BayesianOptimization
+import argparse
 
-from utils import *
+from util import *
 
-PRETRAINED_EMBEDDING = True
-FREEZE_EMBEDDING = False
-DRUG_NAME = 'PZA'  # Global drug name for training.
-SPLIT_NUM = 0  # Global training split for that drug.
-HIDDEN_SIZE = 128  # Same as the dimension of embeddings.
-EPOCHS = 100  # Maximum number of epochs
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# parse the arguments
+def parse_args_bert():
+    parser = argparse.ArgumentParser(description='Bert model for binary classification')
+    parser.add_argument('--drug', type=str, default='INH', help='Drug name')
+    parser.add_argument('--split_num', type=int, default=0, help='Split number')
+    parser.add_argument('--no_pretrained', action='store_true', help='Whether to use pretrained embeddings')
+    parser.add_argument('--freeze', action='store_true', help='Whether to freeze the embeddings during training')
+    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden size of the model, same as the dimension of embeddings')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
+    parser.add_argument('--max_epochs', type=int, default=100, help='Number of epochs')
+    parser.add_argument('--num_encoder_layers', type=int, default=1, help='Number of encoder layers')
+    parser.add_argument('--num_attention_heads', type=int, default=1, help='Number of attention heads')
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate')
+    parser.add_argument('--early_stopping', type=int, default=5, help='Number of epochs for early stopping')
+    parser.add_argument('--save_path', type=str, default='../results', help='Path to save the results')
+    return parser.parse_args()
 
 
 # Model that applies the Bert model to do binary classification.
@@ -112,22 +122,21 @@ class BertDataset(Dataset):
 
         # for all keys in the mutation dictionary, set the value to plus 2
         # because 0 and 1 are reserved for padding and [CLS]
-        self.mut_dict = getMutDict(drug, split_num)
+        self.mut_dict = get_mut_dict(drug, split_num)
         for key in self.mut_dict:
             self.mut_dict[key] += 2
         self.mut_dict['[CLS]'] = 1
 
         self.inputs = []
         # Load the dataset for inputs
-        with open(f'../Data/idx_splits/Walker_single_binary/{drug}_split.pickle', 'rb') as f:
-            train_idx, val_idx, test_idx = pickle.load(f)[split_num]
-        geno_pheno = pd.read_pickle('../Data/Walker2015Lancet.pkl')
+        train_idx, val_idx, test_idx = get_data_splits(drug)[split_num]
+        geno_pheno = get_geno_pheno()
         indices = train_idx if mode == 'train' else val_idx if mode == 'val' else test_idx
         mutations = geno_pheno['MUTATIONS'][indices]
         for muts in mutations:
             self.inputs.append([1] + [self.mut_dict[mut] for mut in muts if mut in self.mut_dict])
 
-        y_train, y_val, y_test = getWalkerLabels(drug)[split_num]
+        y_train, y_val, y_test = get_labels(drug, split_num)
         self.labels = y_train if mode == 'train' else y_val if mode == 'val' else y_test
 
         assert len(self.inputs) == len(self.labels)
@@ -139,7 +148,7 @@ class BertDataset(Dataset):
         return torch.tensor(self.inputs[idx]), torch.tensor(self.labels[idx], dtype=torch.float)
 
 
-# function into the dataloader to make the input length the same for each batch
+# function into the dataloader to make the input length the same for each random batch
 # and to make the input mask
 def collate_batch(batch):
     input_list = [item[0] for item in batch]
@@ -158,12 +167,12 @@ def collate_batch(batch):
 
 
 # the function to load the pretrained embeddings
-def load_embeddings(drug, split_num):
-    mut_dict = getMutDict(drug, split_num)
-    with open(f'../Data/idx_splits/Walker_single_binary/{drug}_emb.pickle', 'rb') as f:
+def load_embeddings(drug, split_num, hidden_size):
+    mut_dict = get_mut_dict(drug, split_num)
+    with open(f'../data/intermediate/{drug}_emb.pickle', 'rb') as f:
         embeddings = pickle.load(f)[split_num]
 
-    assert embeddings.shape[-1] == HIDDEN_SIZE
+    assert embeddings.shape[-1] == hidden_size
     assert embeddings.shape[0] == len(mut_dict)
     
     # The embedding for '[CLS]' is defined as the average of all snp embeddings.
@@ -175,38 +184,35 @@ def load_embeddings(drug, split_num):
     return torch.tensor(embeddings, dtype=torch.float)
 
 
-def train_bert(drug, split_num, params):
-    # hyper parameters in params:
-    # 'batch_size': 8, 16, 32;
-    # 'num_hidden_layers': 1, 2, 3, 4;
-    # 'num_attention_heads': 1, 2, 4, 8;
-    # 'learning_rate': 2e-5 to 1e-4
+def train_bert(args):
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # load the dataset
-    train_dataset = BertDataset(drug, split_num, mode='train')
-    train_dataloader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset), batch_size=params['batch_size'], collate_fn=collate_batch)
-    val_dataset = BertDataset(drug, split_num, mode='val')
-    val_dataloader = DataLoader(val_dataset, sampler=SequentialSampler(val_dataset), batch_size=params['batch_size'], collate_fn=collate_batch)
-    test_dataset = BertDataset(drug, split_num, mode='test')
-    test_dataloader = DataLoader(test_dataset, sampler=SequentialSampler(test_dataset), batch_size=params['batch_size'], collate_fn=collate_batch)
+    train_dataset = BertDataset(args.drug, args.split_num, mode='train')
+    train_dataloader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset), batch_size=args.batch_size, collate_fn=collate_batch)
+    val_dataset = BertDataset(args.drug, args.split_num, mode='val')
+    val_dataloader = DataLoader(val_dataset, sampler=SequentialSampler(val_dataset), batch_size=args.batch_size, collate_fn=collate_batch)
+    test_dataset = BertDataset(args.drug, args.split_num, mode='test')
+    test_dataloader = DataLoader(test_dataset, sampler=SequentialSampler(test_dataset), batch_size=args.batch_size, collate_fn=collate_batch)
 
     # Set the configuration of Bert model.
-    config = BertConfig(hidden_size=HIDDEN_SIZE,
-                        num_hidden_layers=params['num_hidden_layers'],
-                        num_attention_heads=params['num_attention_heads'],
+    config = BertConfig(hidden_size=args.hidden_size,
+                        num_hidden_layers=args.num_encoder_layers,
+                        num_attention_heads=args.num_attention_heads,
                         position_embedding_type='Nothing')
     model = BertBinaryClassification(config)
 
     # Load the pretrained embeddings.
-    if PRETRAINED_EMBEDDING:
-        embedding_weights = load_embeddings(drug, split_num)
-        embedding_layer = torch.nn.Embedding.from_pretrained(embedding_weights, freeze=FREEZE_EMBEDDING)
+    if not args.no_pretrained:
+        embedding_weights = load_embeddings(args.drug, args.split_num, args.hidden_size)
+        embedding_layer = torch.nn.Embedding.from_pretrained(embedding_weights, freeze=args.freeze)
         model.set_input_embeddings(embedding_layer)
 
     model.to(device)
 
     # Set the optimizer
-    optimizer = Adam(model.parameters(), lr=params['learning_rate'])
+    optimizer = Adam(model.parameters(), lr=args.learning_rate)
 
     # Set the seed value all over the place to make this reproducible.
     seed_val = 42
@@ -220,13 +226,11 @@ def train_bert(drug, split_num, params):
     best_model = None
 
     # Training loop
-    for epoch in range(EPOCHS):
+    for epoch in range(args.max_epochs):
         model.train()
         for batch in train_dataloader:
             # Unpack the inputs from our dataloader
-            b_input_ids = batch[0].to(device)
-            b_input_mask = batch[1].to(device)
-            b_labels = batch[2].to(device)
+            b_input_ids, b_input_mask, b_labels = batch[0].to(device), batch[1].to(device), batch[2].to(device)
 
             # Clear any previously calculated gradients before performing a backward pass.
             model.zero_grad()
@@ -250,10 +254,7 @@ def train_bert(drug, split_num, params):
         model.eval()
         val_logits, val_labels = [], []
         for batch in val_dataloader:
-            b_input_ids = batch[0].to(device)
-            b_input_mask = batch[1].to(device)
-            b_labels = batch[2].to(device)
-
+            b_input_ids, b_input_mask, b_labels = batch[0].to(device), batch[1].to(device), batch[2].to(device)
             with torch.no_grad():
                 outputs = model(b_input_ids, attention_mask=b_input_mask, labels=b_labels)
                 logits = outputs['logits']
@@ -270,7 +271,7 @@ def train_bert(drug, split_num, params):
             best_model = model.state_dict()
         
         # Early stopping
-        if epoch - best_val_epoch >= 5:
+        if epoch - best_val_epoch >= args.early_stopping:
             break
     
     # Load the best model and return the results
@@ -279,10 +280,7 @@ def train_bert(drug, split_num, params):
 
     train_logits, train_labels = [], []
     for batch in train_dataloader:
-        b_input_ids = batch[0].to(device)
-        b_input_mask = batch[1].to(device)
-        b_labels = batch[2].to(device)
-
+        b_input_ids, b_input_mask, b_labels = batch[0].to(device), batch[1].to(device), batch[2].to(device)
         with torch.no_grad():
             outputs = model(b_input_ids, attention_mask=b_input_mask, labels=b_labels)
             logits = outputs['logits']
@@ -293,10 +291,7 @@ def train_bert(drug, split_num, params):
 
     val_logits, val_labels = [], []
     for batch in val_dataloader:
-        b_input_ids = batch[0].to(device)
-        b_input_mask = batch[1].to(device)
-        b_labels = batch[2].to(device)
-
+        b_input_ids, b_input_mask, b_labels = batch[0].to(device), batch[1].to(device), batch[2].to(device)
         with torch.no_grad():
             outputs = model(b_input_ids, attention_mask=b_input_mask, labels=b_labels)
             logits = outputs['logits']
@@ -307,10 +302,7 @@ def train_bert(drug, split_num, params):
 
     test_logits, test_labels = [], []
     for batch in test_dataloader:
-        b_input_ids = batch[0].to(device)
-        b_input_mask = batch[1].to(device)
-        b_labels = batch[2].to(device)
-
+        b_input_ids, b_input_mask, b_labels = batch[0].to(device), batch[1].to(device), batch[2].to(device)
         with torch.no_grad():
             outputs = model(b_input_ids, attention_mask=b_input_mask, labels=b_labels)
             logits = outputs['logits']
@@ -324,60 +316,11 @@ def train_bert(drug, split_num, params):
     return res, best_val_auroc
 
 
-params_list = {
-    'batch_size': (-0.5, 2.49),
-    'num_hidden_layers': (-0.5, 2.49),
-    'num_attention_heads': (-0.5, 2.49),
-    'learning_rate': (2, 10)
-}
-
-def best_val_auroc(batch_size, num_hidden_layers, num_attention_heads, learning_rate, return_res=False):
-    params = {}
-    params['batch_size'] = [8, 16, 32][round(batch_size)]
-    params['num_hidden_layers'] = [1, 2, 3][round(num_hidden_layers)]
-    params['num_attention_heads'] = [1, 2, 4][round(num_attention_heads)]
-    params['learning_rate'] = learning_rate * 1e-5
-    res, best_val_auroc = train_bert(DRUG_NAME, SPLIT_NUM, params)
-    if return_res:
-        return res
-    else:
-        return best_val_auroc
+def main():
+    args = parse_args_bert()
+    res, _ = train_bert(args)
+    np.save(f'{args.save_path}/{args.drug}_{args.split_num}_bert.npy', res) 
 
 
 if __name__ == '__main__':
-    DRUG_NAME = str(sys.argv[1])
-    PRETRAINED_EMBEDDING = True 
-    FREEZE_EMBEDDING = False
-    DATASET = 'Walker'
-    model_name = 'bert1_no_freeze'
-
-    if os.path.exists(f'../Results/single_binary_classification/{DATASET}/{DRUG_NAME}_{model_name}.pkl'):
-        print(f'{DRUG_NAME} has been trained using {model_name}!')
-        deleteInterimResult('CRyPTIC', DRUG_NAME, model_name, label='binary', task='multi')
-        sys.exit(0)
-
-    for split_num in range(20): # 20 splits in total
-        if os.path.exists(f'../Results/single_binary_classification/{DATASET}/{DRUG_NAME}_{model_name}_{split_num}.pkl'):
-            continue
-
-        SPLIT_NUM = split_num
-        print(f'Train and test for {DRUG_NAME} in split {SPLIT_NUM} using {model_name}...')
-
-        hyper_opt = BayesianOptimization(best_val_auroc, params_list, random_state=42)
-        hyper_opt.maximize(10, 5)
-        best_hyper = hyper_opt.max['params']
-        best_res = best_val_auroc(**best_hyper, return_res=True)
-        with open(f'../Results/single_binary_classification/{DATASET}/{DRUG_NAME}_{model_name}_{split_num}.pkl', 'wb') as f:
-            pickle.dump((best_res, best_hyper), f)
-
-    # Combine results from 20 splits
-    res_list, best_param_list = [], []
-    for split_num in range(20):
-        with open(f'../Results/single_binary_classification/{DATASET}/{DRUG_NAME}_{model_name}_{split_num}.pkl', 'rb') as f:
-            best_res, best_hyper = pickle.load(f)
-        res_list.append(best_res)
-        best_param_list.append(best_hyper)
-    with open(f'../Results/single_binary_classification/{DATASET}/{DRUG_NAME}_{model_name}.pkl', 'wb') as f:
-        pickle.dump((res_list, best_param_list), f)
-    
-    deleteInterimResult(DATASET, DRUG_NAME, model_name, label='binary', task='single')
+    main()

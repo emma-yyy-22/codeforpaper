@@ -1,6 +1,9 @@
 # Ignore data/datasets folder
 data/datasets/
 
+# Ignore data/ folder
+data/
+
 # Ignore all wandb folders
 wandb/
 
@@ -15,6 +18,9 @@ __pycache__/
 
 # Ignore all result files but not the analysis files
 results/*/
+
+# Ignore all result files
+results/
 
 # Ignore all images but not the essential ones
 figures/*/
