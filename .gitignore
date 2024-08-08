@@ -23,6 +23,6 @@ results/*/
 results/
 
 # Ignore all images but not the essential ones
-figures/*/
+figures/
 
 .DS_Store

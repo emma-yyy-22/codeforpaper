@@ -25,14 +25,17 @@ from util import *
 warnings.filterwarnings('ignore')
 
 
-parser = argparse.ArgumentParser(description='Train and test comparison models')
-parser.add_argument('--model', type=str, help='Model name (NN, WDNN, DeepAMR, CNNGWP or MutEmbAblation)')
-parser.add_argument('--drug', type=str, help='Drug name')
-parser.add_argument('--split_num', type=int, help='Split number')
-parser.add_argument('--max_epochs', type=int, default=100, help='Number of epochs')
-parser.add_argument('--early_stopping', type=int, default=5, help='Number of epochs for early stopping')
-parser.add_argument('--dropout_prob', type=float, default=0.1, help='Dropout probability')
-args = parser.parse_args()
+# Define a function to load the parser
+
+def parse_args_model():
+    parser = argparse.ArgumentParser(description='Train and test comparison models')
+    parser.add_argument('--model', type=str, default='NN', help='Model name (NN, WDNN, DeepAMR, CNNGWP or MutEmbAblation)')
+    parser.add_argument('--drug', type=str, default='INH', help='Drug name')
+    parser.add_argument('--split_num', type=int, default=0, help='Split number')
+    parser.add_argument('--max_epochs', type=int, default=100, help='Number of epochs')
+    parser.add_argument('--early_stopping', type=int, default=5, help='Number of epochs for early stopping')
+    parser.add_argument('--dropout_prob', type=float, default=0.1, help='Dropout probability')
+    return parser.parse_args()
 
 
 # define a function to train a model for one epoch
@@ -130,12 +133,12 @@ def train_binary_nn(args):
     model.load_state_dict(best_model)
     model.eval()
 
-    # train_logits, train_labels = evaluate_model(model, train_dataloader, device)
-    # val_logits, val_labels = evaluate_model(model, val_dataloader, device)
+    train_logits, train_labels = evaluate_model(model, train_dataloader, device)
+    val_logits, val_labels = evaluate_model(model, val_dataloader, device)
     test_logits, test_labels = evaluate_model(model, test_dataloader, device)
     wandb.log({'test_auroc': roc_auc_score(test_labels, test_logits)})
 
-    res = {'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
+    res = {'train_preds': train_logits, 'train_labels': train_labels, 'val_preds': val_logits, 'val_labels': val_labels, 'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
     wandb.finish()
     # delete the data and model to save memory
     del model, train_dataloader, val_dataloader, test_dataloader
@@ -281,10 +284,12 @@ def train_WDNN(args):
     # Evaluate the model
     model.load_state_dict(best_model)
     model.eval()
+    train_logits, train_labels = evaluate_model(model, train_dataloader, device)
+    val_logits, val_labels = evaluate_model(model, val_dataloader, device)
     test_logits, test_labels = evaluate_model(model, test_dataloader, device)
     wandb.log({'test_auroc': roc_auc_score(test_labels, test_logits)})
 
-    res = {'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
+    res = {'train_preds': train_logits, 'train_labels': train_labels, 'val_preds': val_logits, 'val_labels': val_labels, 'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
     wandb.finish()
     # delete the data and model to save memory
     del model, train_dataloader, val_dataloader, test_dataloader
@@ -423,10 +428,12 @@ def train_DeepAMR(args):
     model.load_state_dict(best_model)
     model.eval()
 
+    train_logits, train_labels = evaluate_model(model, train_dataloader, device)
+    val_logits, val_labels = evaluate_model(model, val_dataloader, device)
     test_logits, test_labels = evaluate_model(model, test_dataloader, device)
     wandb.log({'test_auroc': roc_auc_score(test_labels, test_logits)})
 
-    res = {'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
+    res = {'train_preds': train_logits, 'train_labels': train_labels, 'val_preds': val_logits, 'val_labels': val_labels, 'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
     wandb.finish()
     # delete the data and model to save memory
     del model, train_dataloader, val_dataloader, test_dataloader
@@ -543,10 +550,12 @@ def train_CNNGWP(args):
     # Evaluate the model
     model.load_state_dict(best_model)
     model.eval()
+    train_logits, train_labels = evaluate_model(model, train_dataloader, device)
+    val_logits, val_labels = evaluate_model(model, val_dataloader, device)
     test_logits, test_labels = evaluate_model(model, test_dataloader, device)
     wandb.log({'test_auroc': roc_auc_score(test_labels, test_logits)})
 
-    res = {'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
+    res = {'train_preds': train_logits, 'train_labels': train_labels, 'val_preds': val_logits, 'val_labels': val_labels, 'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
     wandb.finish()
     # delete the data and model to save memory
     del model, train_dataloader, val_dataloader, test_dataloader
@@ -711,10 +720,12 @@ def train_MutEmbAblation(args):
     # Evaluate the model
     model.load_state_dict(best_model)
     model.eval()
+    train_logits, train_labels = evaluate_model(model, train_dataloader, device)
+    val_logits, val_labels = evaluate_model(model, val_dataloader, device)
     test_logits, test_labels = evaluate_model(model, test_dataloader, device)
     wandb.log({'test_auroc': roc_auc_score(test_labels, test_logits)})
 
-    res = {'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
+    res = {'train_preds': train_logits, 'train_labels': train_labels, 'val_preds': val_logits, 'val_labels': val_labels, 'test_preds': test_logits, 'test_labels': test_labels, 'best_model': best_model}
     wandb.finish()
     # delete the data and model to save memory
     del model, train_dataloader, val_dataloader, test_dataloader
@@ -778,6 +789,7 @@ def bayesOpt_MutEmbAblation(args):
 if __name__ == '__main__':
     # if os.path.exists(f'../results/{args.drug}_{args.model}.pkl'):
     #     sys.exit()
+    args = parse_args_model()
     
     drugs = get_drug_list()
     for drug in drugs:
