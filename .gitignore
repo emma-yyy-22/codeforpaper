@@ -25,4 +25,8 @@ results/
 # Ignore all images but not the essential ones
 figures/
 
+tmp/
+
+*.stdout
+
 .DS_Store
