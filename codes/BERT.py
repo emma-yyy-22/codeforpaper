@@ -16,7 +16,6 @@ from transformers import BertPreTrainedModel, BertModel
 from transformers import BertConfig
 from transformers.modeling_outputs import SequenceClassifierOutput
 from sklearn.metrics import roc_auc_score
-from bayes_opt import BayesianOptimization
 import argparse
 
 from util import *
@@ -27,7 +26,7 @@ def parse_args_bert():
     parser = argparse.ArgumentParser(description='Bert model for binary classification')
     parser.add_argument('--drug', type=str, default='INH', help='Drug name')
     parser.add_argument('--split_num', type=int, default=0, help='Split number')
-    parser.add_argument('--no_pretrained', action='store_true', help='Whether to use pretrained embeddings')
+    parser.add_argument('--pretrained', action='store_true', help='Whether to use pretrained embeddings')
     parser.add_argument('--freeze', action='store_true', help='Whether to freeze the embeddings during training')
     parser.add_argument('--hidden_size', type=int, default=128, help='Hidden size of the model, same as the dimension of embeddings')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
@@ -169,8 +168,8 @@ def collate_batch(batch):
 # the function to load the pretrained embeddings
 def load_embeddings(drug, split_num, hidden_size):
     mut_dict = get_mut_dict(drug, split_num)
-    with open(f'../data/intermediate/{drug}_emb.pickle', 'rb') as f:
-        embeddings = pickle.load(f)[split_num]
+    with open(f'../data/{drug}_{split_num}_emb.pickle', 'rb') as f:
+        embeddings = pickle.load(f)
 
     assert embeddings.shape[-1] == hidden_size
     assert embeddings.shape[0] == len(mut_dict)
@@ -204,7 +203,7 @@ def train_bert(args):
     model = BertBinaryClassification(config)
 
     # Load the pretrained embeddings.
-    if not args.no_pretrained:
+    if args.pretrained:
         embedding_weights = load_embeddings(args.drug, args.split_num, args.hidden_size)
         embedding_layer = torch.nn.Embedding.from_pretrained(embedding_weights, freeze=args.freeze)
         model.set_input_embeddings(embedding_layer)
@@ -263,7 +262,7 @@ def train_bert(args):
         val_logits = np.concatenate(val_logits, axis=0)
         val_labels = np.concatenate(val_labels, axis=0)
         val_auroc = roc_auc_score(val_labels, val_logits)
-        # print(f'Epoch {epoch + 1} validation AUROC: {val_auroc}')
+        print(f'Epoch {epoch + 1} validation AUROC: {val_auroc}')
 
         if val_auroc > best_val_auroc:
             best_val_auroc = val_auroc

@@ -7,7 +7,7 @@ from torch.optim import SparseAdam
 from torch.utils.data import DataLoader
 from dgl.nn.pytorch import MetaPath2Vec
 import argparse
-from codes.util import *
+from util import *
 
 
 # parse the arguments
@@ -19,7 +19,7 @@ def parse_args_metapath2vec():
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
     parser.add_argument('--max_epochs', type=int, default=200, help='Number of epochs')
-    parser.add_argument('--save_path', type=str, default='../data/intermediate/', help='Path to save the embeddings')
+    parser.add_argument('--save_path', type=str, default='../data', help='Path to save the embeddings')
     return parser.parse_args()
 
 

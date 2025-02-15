@@ -15,23 +15,23 @@ def get_drug_list(dataset=1):
     
 # Return the raw dataset 1
 def get_geno_pheno():
-    return pd.read_pickle('../data/Walker2015Lancet.pkl')
+    return pd.read_pickle('../data/cryptic.pkl')
 
 
 # Return the splitted dataset indices for a drug
 def get_data_splits(drug):
-    if not os.path.exists(f'../data/idx_splits/{drug}_split.pickle'):
-        save_split()
-    with open(f'../data/idx_splits/{drug}_split.pickle', 'rb') as f:
+    if not os.path.exists(f'../data/{drug}_split.pickle'):
+        save_split(drug)
+    with open(f'../data/{drug}_split.pickle', 'rb') as f:
         splits = pickle.load(f)
     return splits   
 
 
 # Return the dataset indices for a drug
 def get_data_indices(drug):
-    if not os.path.exists(f'../data/idx_splits/{drug}_index.pickle'):
-        save_split()
-    with open(f'../data/idx_splits/{drug}_index.pickle', 'rb') as f:
+    if not os.path.exists(f'../data/{drug}_index.pickle'):
+        save_split(drug)
+    with open(f'../data/{drug}_index.pickle', 'rb') as f:
         indices = pickle.load(f)
     return indices
 
@@ -61,14 +61,12 @@ def singleBinarySplit(drug):
 
 
 # Save the splits for single drug binary classification
-def save_split():
-    drug_list = get_drug_list()
-    for drug in drug_list:
-        res_split, x = singleBinarySplit(drug)
-        with open(f"../data/idx_splits/{drug}_split.pickle", "wb") as fp:
-            pickle.dump(res_split, fp)
-        with open(f"../data/idx_splits/{drug}_index.pickle", "wb") as fp:
-            pickle.dump(x, fp)
+def save_split(drug):
+    res_split, x = singleBinarySplit(drug)
+    with open(f"../data/{drug}_split.pickle", "wb") as fp:
+        pickle.dump(res_split, fp)
+    with open(f"../data/{drug}_index.pickle", "wb") as fp:
+        pickle.dump(x, fp)
 
 
 # function to get the labels for Walker dataset from the data splits

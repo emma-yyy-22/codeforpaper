@@ -1,0 +1,7 @@
+dgl==2.3.0
+numpy
+pandas
+python==3.9.21
+pytorch=2.3.1
+scikit-learn==1.6.0
+transformers==4.33.3
